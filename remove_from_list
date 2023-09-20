@@ -1,0 +1,233 @@
+async function onTrack(event, settings) {
+	if (
+		event.event === 'Unsubscribed from list' ||
+		event.event === 'Unsubscribed from List'
+	) {
+		const klaviyoEndpoint = `https://a.klaviyo.com/api/lists/${event.properties.listId}/relationships/profiles/`;
+
+		//Get API key based on domain
+		let api_key = '';
+		switch (event.properties.shopId) {
+			case 'philipsonwine.test':
+				api_key = 'xxx';
+				break;
+			case 'SHOP1':
+				api_key = 'xxx';
+				break;
+			case 'SHOP2':
+				api_key = 'xxx';
+				break;
+			case 'SHOP5':
+				api_key = 'xxx';
+				break;
+			default:
+				api_key = 'no_api';
+				break;
+		}
+		console.log(api_key);
+
+		// Identify in Klaviyo
+		try {
+			const klaviyo_identify_url = `https://a.klaviyo.com/api/v2/people/search?email=${event.userId}&api_key=${api_key}`;
+			const response = await fetch(klaviyo_identify_url);
+			const data = await response.json();
+			const klaviyo_id = data.id;
+			console.log(klaviyo_id);
+
+			if (klaviyo_id) {
+				const klaviyoResponse = await fetch(klaviyoEndpoint, {
+					method: 'DELETE',
+					headers: {
+						Authorization: 'Klaviyo-API-Key ' + api_key,
+						'Content-Type': 'application/json',
+						accept: 'application/json',
+						revision: '2023-07-15'
+					},
+					body: JSON.stringify({
+						data: [
+							{
+								type: 'profile',
+								id: klaviyo_id
+							}
+						]
+					})
+				});
+
+				if (klaviyoResponse.status >= 200 && klaviyoResponse.status < 300) {
+					console.log('Success');
+
+					// Map list for Ids
+					const map_list = {
+						W3HXiX: 'Tilbudsmail (DK)',
+						WZRhmw: 'Primeur (DK)',
+						WyFZu3: 'Fine Wine (DK)',
+						UfTjQQ: 'En gang om ugen (DK)',
+						XyQjF7: 'Spiritus (DK)',
+						TnWzSk: 'Tilbudsmail (SE)',
+						UdQpnC: 'Primeur (SE)',
+						TKuBqr: 'Fine Wine (SE)',
+						UkuDSx: 'En gang om ugen (SE)',
+						Wv476Z: 'Tilbudsmail (TEST)',
+						Sv44m5: 'Primeur (TEST)',
+						YfsYsX: 'Fine Wine (TEST)',
+						WSnihL: 'En gang om ugen (TEST)'
+					};
+
+					const myMap = createMap(map_list);
+					const listId = event.properties.listId;
+					const listName = myMap.get(listId);
+
+					//Create removed from list event
+
+					try {
+						const eventEndpoint = 'https://a.klaviyo.com/api/events/';
+						const eventPayload = {
+							data: {
+								type: 'event',
+								attributes: {
+									properties: {
+										listName: listName,
+										listId: event.properties.listId,
+										origin: event.properties.origin
+									},
+									metric: {
+										data: {
+											type: 'metric',
+											attributes: {
+												name: 'Removed from List'
+											}
+										}
+									},
+									profile: {
+										data: {
+											type: 'profile',
+											id: klaviyo_id
+										}
+									}
+								}
+							}
+						};
+
+						const response = await fetch(eventEndpoint, {
+							method: 'POST',
+							headers: {
+								Authorization: 'Klaviyo-API-Key ' + api_key,
+								'Content-Type': 'application/json',
+								accept: 'application/json',
+								revision: '2023-08-15'
+							},
+							body: JSON.stringify(eventPayload)
+						});
+
+						if (response.status >= 200 && response.status < 300) {
+							console.log('Event created successfully');
+
+							// Check for list subscription status
+							const subscriptionCheckURL = `https://a.klaviyo.com/api/profiles/${klaviyo_id}/lists/`;
+							const subscriptionResponse = await fetch(subscriptionCheckURL, {
+								headers: {
+									Authorization: 'Klaviyo-API-Key ' + api_key,
+									'Content-Type': 'application/json',
+									accept: 'application/json',
+									revision: '2023-08-15'
+								}
+							});
+							const subscriptionData = await subscriptionResponse.json();
+
+							if (subscriptionData.data && subscriptionData.data.length > 0) {
+								console.log('Subscribed to list');
+							} else {
+								console.log('Not subscribed');
+
+								// Make the new API call if not subscribed
+
+								const bulkDeleteURL =
+									'https://a.klaviyo.com/api/profile-subscription-bulk-delete-jobs/';
+								const bulkDeletePayload = {
+									data: {
+										type: 'profile-subscription-bulk-delete-job',
+										attributes: {
+											profiles: {
+												data: [
+													{
+														type: 'profile',
+														attributes: {
+															email: event.userId
+														}
+													}
+												]
+											}
+										},
+										relationships: {
+											list: {
+												data: {
+													type: 'list',
+													id: event.properties.listId
+												}
+											}
+										}
+									}
+								};
+
+								const bulkDeleteResponse = await fetch(bulkDeleteURL, {
+									method: 'POST',
+									headers: {
+										Authorization: 'Klaviyo-API-Key ' + api_key,
+										'Content-Type': 'application/json',
+										accept: 'application/json',
+										revision: '2023-09-15'
+									},
+									body: JSON.stringify(bulkDeletePayload)
+								});
+
+								if (
+									bulkDeleteResponse.status >= 200 &&
+									bulkDeleteResponse.status < 300
+								) {
+									console.log('Successfully requested bulk delete.');
+								} else {
+									console.log(
+										'Error: Bulk delete request failed with status',
+										bulkDeleteResponse.status
+									);
+									const responseBody = await bulkDeleteResponse.text();
+									console.log('Response body:', responseBody);
+								}
+							}
+						} else {
+							console.log(
+								'Error: Event creation request failed with status',
+								response.status
+							);
+							const responseBody = await response.text();
+							console.log('Response body:', responseBody);
+						}
+					} catch (error) {
+						console.error('Error:', error.message);
+					}
+				} else {
+					console.log(
+						'Error: Request failed with status',
+						klaviyoResponse.status
+					);
+				}
+			} else {
+				console.error('Unexpected response structure:', data);
+			}
+		} catch (error) {
+			console.error('Error:', error.message);
+		}
+	} else {
+		console.log("Didn't meet criteria");
+	}
+}
+
+function createMap(list) {
+	const map = new Map();
+	for (const key in list) {
+		if (list.hasOwnProperty(key)) {
+			map.set(key, list[key]);
+		}
+	}
+	return map;
+}
